@@ -1,0 +1,36 @@
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Data (large files)
+data/raw/
+data/processed/
+*.ply
+*.obj
+*.pcd
+*.nii.gz
+*.nii
+
+# Model checkpoints
+checkpoints/*.pth
+checkpoints/*.pt
+*.onnx
+*.engine
+
+# Results
+results/*.png
+results/*.pdf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
