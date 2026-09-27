@@ -1,81 +1,98 @@
-
 """
-Clinical Dental Image Analysis Agent - MVP
-Gradio interface with mock segmentation pipeline
+Clinical Dental Image Analysis Agent - Gradio UI
+File upload + Chatbot (real LLM + Function Calling) + Report display.
 """
 import os
-import numpy as np
 import gradio as gr
-import open3d as o3d
+from llm_agent import DentalAnalysisAgent
 
-# Mock segmentation - will be replaced with real model
-def segment_point_cloud(file_path):
-    """Mock segmentation: returns random labels for now."""
-    pcd = o3d.io.read_point_cloud(file_path)
-    points = np.asarray(pcd.points)
-    n = len(points)
-    
-    # Mock: assign random labels (0=gum, 1-8=teeth)
-    labels = np.random.randint(0, 9, size=n)
-    
-    return points, labels
+# Singleton agent
+_agent = None
 
 
-def analyze_dental_image(file):
-    """Main agent function: upload -> segment -> generate report."""
+def get_agent() -> DentalAnalysisAgent:
+    global _agent
+    if _agent is None:
+        _agent = DentalAnalysisAgent()
+    return _agent
+
+
+# ------------------------------------------------------------------ handlers
+def on_file_upload(file):
+    """When user uploads a file, register it with the agent."""
     if file is None:
-        return "请上传口扫点云文件（.ply/.obj）", None
-    
-    try:
-        # Step 1: Load and segment
-        points, labels = segment_point_cloud(file.name)
-        
-        # Step 2: Generate analysis report
-        n_teeth = len(np.unique(labels)) - 1  # exclude gum
-        n_points = len(points)
-        
-        report = f"""## 口腔影像分析报告
-
-### 基本信息
-- 点云点数：{n_points:,}
-- 检测到牙齿数量：约 {n_teeth} 颗
-
-### 分析结果
-- 牙龈区域：已识别
-- 牙齿分割：完成（mock 数据，待接入真实模型）
-- 牙列完整性：待评估
-
-### 注意
-当前为 MVP 演示版本，分割结果为模拟数据。
-接入真实模型后将显示准确的牙齿分割与编号。
-"""
-        return report, points.tolist()
-    
-    except Exception as e:
-        return f"处理出错：{str(e)}", None
+        return "未选择文件。"
+    agent = get_agent()
+    agent.set_file(file.name)
+    return f"已上传: {os.path.basename(file.name)}\n路径: {file.name}"
 
 
-# Build Gradio interface
+def respond(message, chat_history):
+    """Send user message to agent, stream back the reply."""
+    if not message.strip():
+        return "", chat_history
+
+    agent = get_agent()
+    reply = agent.chat(message)
+
+    chat_history.append({"role": "user", "content": message})
+    chat_history.append({"role": "assistant", "content": reply})
+
+    # Update report area if a report was generated
+    report_md = agent.last_report or "（暂无报告。请先上传文件并要求分析。）"
+    return "", chat_history, report_md
+
+
+def new_session():
+    """Reset conversation."""
+    agent = get_agent()
+    agent.reset()
+    return [], "（已开启新会话）"
+
+
+# --------------------------------------------------------------------- UI
 with gr.Blocks(title="口腔影像智能分析 Agent") as demo:
     gr.Markdown("# 口腔影像智能分析 Agent")
-    gr.Markdown("上传口扫点云文件，自动进行牙齿分割与分析报告生成")
-    
+    gr.Markdown("上传口扫点云文件 → 与 AI 对话分析 → 自动生成报告")
+
     with gr.Row():
-        with gr.Column():
+        # ---- left: file upload ----
+        with gr.Column(scale=1):
+            gr.Markdown("### 📁 文件上传")
             file_input = gr.File(
-                label="上传口扫文件（.ply / .obj）",
-                file_types=[".ply", ".obj", ".pcd"]
+                label="点云 / 影像文件",
+                file_types=[".ply", ".obj", ".pcd", ".stl", ".nii", ".dcm"],
             )
-            analyze_btn = gr.Button("开始分析", variant="primary")
-        
-        with gr.Column():
-            report_output = gr.Markdown(label="分析报告")
-    
-    analyze_btn.fn = analyze_dental_image
-    analyze_btn.inputs = [file_input]
-    analyze_btn.outputs = [report_output, gr.State()]
+            upload_status = gr.Textbox(label="上传状态", interactive=False, lines=2)
+            file_input.change(fn=on_file_upload, inputs=[file_input],
+                              outputs=[upload_status])
+
+            gr.Markdown("---")
+            reset_btn = gr.Button("🔄 开启新会话", variant="secondary")
+
+        # ---- right: chat + report ----
+        with gr.Column(scale=2):
+            gr.Markdown("### 💬 对话分析")
+            chatbot = gr.Chatbot(
+                height=380, type="md",
+                label="AI 助手",
+            )
+            msg_input = gr.Textbox(
+                label="输入问题",
+                placeholder="例如：帮我分析这个口扫文件 / 这是什么牙齿问题？",
+            )
+
+            gr.Markdown("### 📊 分析报告")
+            report_output = gr.Markdown("（暂无报告。请先上传文件并要求分析。）")
+
+    # wire up
+    msg_input.submit(
+        fn=respond,
+        inputs=[msg_input, chatbot],
+        outputs=[msg_input, chatbot, report_output],
+    )
+    reset_btn.click(fn=new_session, outputs=[chatbot, report_output])
 
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
-
